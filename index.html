@@ -1,0 +1,745 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Super Retro Rolling Ball Platformer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            font-family: 'Press Start 2P', monospace;
+            background-color: #0f172a;
+            user-select: none;
+            touch-action: none;
+        }
+        canvas {
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            object-fit: cover;
+        }
+    </style>
+</head>
+<body class="flex flex-col items-center justify-center relative">
+
+    <div class="absolute top-0 left-0 w-full flex justify-between items-center p-4 sm:p-6 bg-gradient-to-b from-black/80 to-transparent z-10 text-xs sm:text-sm text-white pointer-events-none">
+        <div class="flex gap-4 sm:gap-8">
+            <div>WORLD: <span id="hud-world" class="text-yellow-300">1-1</span></div>
+            <div>SCORE: <span id="hud-score" class="text-green-400">000000</span></div>
+        </div>
+        <div class="flex gap-4 sm:gap-8">
+            <div>COINS: <span id="hud-coins" class="text-yellow-400">🪙 x0</span></div>
+            <div>LIVES: <span id="hud-lives" class="text-red-500">❤️ x5</span></div>
+        </div>
+    </div>
+
+    <canvas id="gameCanvas" width="960" height="540"></canvas>
+
+    <div id="overlay" class="absolute inset-0 bg-black/85 flex flex-col items-center justify-center text-center p-6 z-20 text-white">
+        <h2 id="overlay-title" class="text-2xl sm:text-4xl text-yellow-400 mb-4 animate-bounce">ROLLING QUEST</h2>
+        <p id="overlay-desc" class="text-xs sm:text-sm text-gray-300 mb-8 max-w-md leading-relaxed">
+            Use <span class="text-yellow-300">Arrow Keys / A-D</span> to roll, <span class="text-yellow-300">Space / Up</span> to jump. Avoid spikes & nuclear bombs (3s timer in Worlds 2+ leading to massive explosive destruction!). Reach the <span class="text-green-400">Door</span> at the end of each world and press <span class="text-yellow-300">UP</span> to enter! Lives reset to 5 each level!
+        </p>
+        <button id="action-btn" class="bg-yellow-500 hover:bg-yellow-400 text-black font-bold py-4 px-10 rounded-xl shadow-lg text-sm sm:text-base transition transform hover:scale-105 active:scale-95 cursor-pointer">
+            START GAME
+        </button>
+    </div>
+
+    <div class="absolute bottom-6 left-6 flex gap-4 z-10 sm:hidden">
+        <button id="btn-left" class="bg-slate-700/80 active:bg-slate-500 text-white p-5 rounded-2xl text-xl font-bold shadow-lg">◀</button>
+        <button id="btn-right" class="bg-slate-700/80 active:bg-slate-500 text-white p-5 rounded-2xl text-xl font-bold shadow-lg">▶</button>
+    </div>
+    <div class="absolute bottom-6 right-6 flex gap-4 z-10 sm:hidden">
+        <button id="btn-jump" class="bg-yellow-600/90 active:bg-yellow-500 text-white px-6 py-5 rounded-2xl text-xs font-bold shadow-lg">JUMP/ENTER</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        const overlay = document.getElementById('overlay');
+        const overlayTitle = document.getElementById('overlay-title');
+        const overlayDesc = document.getElementById('overlay-desc');
+        const actionBtn = document.getElementById('action-btn');
+        const hudWorld = document.getElementById('hud-world');
+        const hudScore = document.getElementById('hud-score');
+        const hudCoins = document.getElementById('hud-coins');
+        const hudLives = document.getElementById('hud-lives');
+
+        // Web Audio API sound synthesizer
+        let audioCtx = null;
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+        }
+
+        function playSound(type) {
+            if (!audioCtx) return;
+            try {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                const now = audioCtx.currentTime;
+
+                if (type === 'jump') {
+                    osc.type = 'square';
+                    osc.frequency.setValueAtTime(150, now);
+                    osc.frequency.exponentialRampToValueAtTime(450, now + 0.15);
+                    gain.gain.setValueAtTime(0.1, now);
+                    gain.gain.linearRampToValueAtTime(0.01, now + 0.15);
+                    osc.start(now);
+                    osc.stop(now + 0.15);
+                } else if (type === 'coin') {
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(987.77, now);
+                    osc.frequency.setValueAtTime(1318.51, now + 0.08);
+                    gain.gain.setValueAtTime(0.15, now);
+                    gain.gain.linearRampToValueAtTime(0.01, now + 0.3);
+                    osc.start(now);
+                    osc.stop(now + 0.3);
+                } else if (type === 'stomp') {
+                    osc.type = 'triangle';
+                    osc.frequency.setValueAtTime(120, now);
+                    osc.frequency.linearRampToValueAtTime(40, now + 0.1);
+                    gain.gain.setValueAtTime(0.2, now);
+                    gain.gain.linearRampToValueAtTime(0.01, now + 0.1);
+                    osc.start(now);
+                    osc.stop(now + 0.1);
+                } else if (type === 'beep') {
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(800, now);
+                    gain.gain.setValueAtTime(0.1, now);
+                    gain.gain.linearRampToValueAtTime(0.01, now + 0.1);
+                    osc.start(now);
+                    osc.stop(now + 0.1);
+                } else if (type === 'nuke_explosion') {
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(90, now);
+                    osc.frequency.linearRampToValueAtTime(20, now + 0.8);
+                    gain.gain.setValueAtTime(0.4, now);
+                    gain.gain.linearRampToValueAtTime(0.01, now + 0.8);
+                    osc.start(now);
+                    osc.stop(now + 0.8);
+                } else if (type === 'die') {
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(200, now);
+                    osc.frequency.linearRampToValueAtTime(50, now + 0.4);
+                    gain.gain.setValueAtTime(0.25, now);
+                    gain.gain.linearRampToValueAtTime(0.01, now + 0.4);
+                    osc.start(now);
+                    osc.stop(now + 0.4);
+                } else if (type === 'win' || type === 'door') {
+                    osc.type = 'square';
+                    const notes = [523.25, 659.25, 783.99, 1046.5];
+                    notes.forEach((freq, i) => {
+                        const noteOsc = audioCtx.createOscillator();
+                        const noteGain = audioCtx.createGain();
+                        noteOsc.connect(noteGain);
+                        noteGain.connect(audioCtx.destination);
+                        noteOsc.frequency.setValueAtTime(freq, now + i * 0.1);
+                        noteGain.gain.setValueAtTime(0.15, now + i * 0.1);
+                        noteGain.gain.linearRampToValueAtTime(0.01, now + i * 0.1 + 0.15);
+                        noteOsc.start(now + i * 0.1);
+                        noteOsc.stop(now + i * 0.1 + 0.15);
+                    });
+                }
+            } catch (e) {
+                console.error("Audio error", e);
+            }
+        }
+
+        let gameState = 'START'; // START, PLAYING, GAMEOVER, WIN
+        let currentWorld = 1;
+        let score = 0;
+        let coins = 0;
+        let lives = 5;
+        let screenShakeTimer = 0;
+        let screenShakeIntensity = 0;
+
+        let player = {
+            x: 100,
+            y: 300,
+            radius: 18,
+            vx: 0,
+            vy: 0,
+            speed: 4.2,
+            jumpPower: -12.5,
+            gravity: 0.45,
+            grounded: false,
+            rotation: 0,
+            isDead: false,
+            particles: []
+        };
+
+        let keys = { left: false, right: false, jump: false, upPressed: false };
+
+        let platforms = [];
+        let hazards = [];
+        let coinsList = [];
+        let enemies = [];
+        let nuclearBombs = [];
+        let fireParticles = [];
+        let exitDoor = { x: 3400, y: 260, w: 45, h: 70, reached: false };
+        let levelLength = 3600;
+
+        window.addEventListener('keydown', (e) => {
+            initAudio();
+            if (e.code === 'ArrowLeft' || e.code === 'KeyA') keys.left = true;
+            if (e.code === 'ArrowRight' || e.code === 'KeyD') keys.right = true;
+            if (e.code === 'ArrowUp' || e.code === 'KeyW' || e.code === 'Space') {
+                if (!keys.jump && player.grounded && gameState === 'PLAYING') {
+                    player.vy = player.jumpPower;
+                    player.grounded = false;
+                    playSound('jump');
+                }
+                keys.jump = true;
+                keys.upPressed = true;
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            if (e.code === 'ArrowLeft' || e.code === 'KeyA') keys.left = false;
+            if (e.code === 'ArrowRight' || e.code === 'KeyD') keys.right = false;
+            if (e.code === 'ArrowUp' || e.code === 'KeyW' || e.code === 'Space') {
+                keys.jump = false;
+                keys.upPressed = false;
+            }
+        });
+
+        const bindTouch = (id, keyName) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                initAudio();
+                if (keyName === 'jump' && player.grounded && gameState === 'PLAYING') {
+                    player.vy = player.jumpPower;
+                    player.grounded = false;
+                    playSound('jump');
+                }
+                keys[keyName] = true;
+                if (keyName === 'jump') keys.upPressed = true;
+            });
+            el.addEventListener('touchend', (e) => {
+                e.preventDefault();
+                keys[keyName] = false;
+                if (keyName === 'jump') keys.upPressed = false;
+            });
+        };
+        bindTouch('btn-left', 'left');
+        bindTouch('btn-right', 'right');
+        bindTouch('btn-jump', 'jump');
+
+        actionBtn.addEventListener('click', () => {
+            initAudio();
+            if (gameState === 'START' || gameState === 'GAMEOVER') {
+                currentWorld = 1;
+                score = 0;
+                coins = 0;
+                lives = 5;
+                loadWorld(currentWorld);
+            } else if (gameState === 'WIN') {
+                currentWorld = 1;
+                loadWorld(currentWorld);
+            }
+        });
+
+        function loadWorld(worldNum) {
+            currentWorld = worldNum;
+            lives = 5; // Reset lives to 5 at the start of every new level
+            player.x = 100;
+            player.y = 300;
+            player.vx = 0;
+            player.vy = 0;
+            player.isDead = false;
+            player.particles = [];
+            fireParticles = [];
+            exitDoor.reached = false;
+
+            platforms = [];
+            hazards = [];
+            coinsList = [];
+            enemies = [];
+            nuclearBombs = [];
+
+            let curX = 0;
+            while (curX < levelLength - 500) {
+                let width = 700 + Math.random() * 400;
+                let height = 380;
+                platforms.push({ x: curX, y: height, w: width, h: 160, destroyed: false });
+
+                if (curX > 300 && Math.random() < 0.4 + (worldNum * 0.05)) {
+                    hazards.push({ x: curX + 150, y: height - 18, w: 60, h: 18 });
+                }
+
+                for (let c = 1; c <= 4; c++) {
+                    coinsList.push({ x: curX + 100 + c * 80, y: height - 90 - Math.sin(c) * 30, collected: false });
+                }
+
+                for (let p = 0; p < 2; p++) {
+                    let platX = curX + 200 + p * 250;
+                    let platY = height - 130 - p * 40;
+                    platforms.push({ x: platX, y: platY, w: 140, h: 22, destroyed: false });
+
+                    if (Math.random() > 0.3) {
+                        coinsList.push({ x: platX + 50, y: platY - 35, collected: false });
+                    }
+
+                    // Nuclear bombs starting from World 2
+                    if (worldNum >= 2 && Math.random() < 0.4 + (worldNum * 0.05)) {
+                        nuclearBombs.push({
+                            x: platX + 40,
+                            y: platY - 26,
+                            w: 26,
+                            h: 26,
+                            timer: 3.0,
+                            triggered: false,
+                            exploded: false
+                        });
+                    }
+                }
+
+                if (curX > 400) {
+                    let enemySpeed = 1.0 + (worldNum * 0.25);
+                    enemies.push({
+                        x: curX + 250,
+                        y: height - 32,
+                        w: 32,
+                        h: 32,
+                        minX: curX + 50,
+                        maxX: curX + width - 50,
+                        vx: enemySpeed,
+                        alive: true
+                    });
+                }
+
+                curX += width + 180 + Math.max(0, (worldNum - 1) * 20);
+            }
+
+            let finalPlatformX = curX;
+            platforms.push({ x: finalPlatformX, y: 380, w: 500, h: 160, destroyed: false });
+            exitDoor.x = finalPlatformX + 220;
+            exitDoor.y = 380 - exitDoor.h;
+            levelLength = finalPlatformX + 500;
+
+            gameState = 'PLAYING';
+            updateHUD();
+            overlay.classList.add('hidden');
+        }
+
+        function updateHUD() {
+            hudWorld.textContent = `1-${currentWorld}`;
+            hudScore.textContent = String(score).padStart(6, '0');
+            hudCoins.textContent = `🪙 x${coins}`;
+            hudLives.textContent = `❤️ x${lives}`;
+        }
+
+        function playerDeath() {
+            if (player.isDead) return;
+            player.isDead = true;
+            player.vy = -8;
+            playSound('die');
+
+            player.particles = [];
+            for (let i = 0; i < 40; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const speed = 2 + Math.random() * 8;
+                player.particles.push({
+                    x: player.x,
+                    y: player.y,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed,
+                    size: 4 + Math.random() * 6,
+                    color: Math.random() > 0.5 ? '#3b82f6' : '#93c5fd'
+                });
+            }
+
+            lives--;
+            updateHUD();
+
+            setTimeout(() => {
+                if (lives > 0) {
+                    player.x = 100;
+                    player.y = 250;
+                    player.vx = 0;
+                    player.vy = 0;
+                    player.isDead = false;
+                    player.particles = [];
+                } else {
+                    gameState = 'GAMEOVER';
+                    overlayTitle.textContent = "GAME OVER";
+                    overlayDesc.textContent = "Your blue ball popped! Click below to try again from World 1.";
+                    actionBtn.textContent = "PLAY AGAIN";
+                    overlay.classList.remove('hidden');
+                }
+            }, 1200);
+        }
+
+        function update(dt) {
+            if (gameState !== 'PLAYING') return;
+
+            if (screenShakeTimer > 0) {
+                screenShakeTimer -= dt;
+            }
+
+            if (player.isDead) {
+                player.particles.forEach(p => {
+                    p.x += p.vx;
+                    p.y += p.vy;
+                    p.vy += 0.3;
+                });
+                return;
+            }
+
+            if (keys.left) {
+                player.vx = -player.speed;
+                player.rotation -= 0.15;
+            } else if (keys.right) {
+                player.vx = player.speed;
+                player.rotation += 0.15;
+            } else {
+                player.vx *= 0.8;
+            }
+
+            player.x += player.vx;
+            player.vy += player.gravity;
+            player.y += player.vy;
+            player.grounded = false;
+
+            platforms.forEach(plat => {
+                if (!plat.destroyed &&
+                    player.x + player.radius > plat.x &&
+                    player.x - player.radius < plat.x + plat.w &&
+                    player.y + player.radius >= plat.y &&
+                    player.y - player.radius < plat.y + plat.h &&
+                    player.vy > 0) {
+                    player.y = plat.y - player.radius;
+                    player.vy = 0;
+                    player.grounded = true;
+                }
+            });
+
+            if (player.y > canvas.height + 60) {
+                playerDeath();
+                return;
+            }
+
+            hazards.forEach(h => {
+                if (player.x + player.radius > h.x &&
+                    player.x - player.radius < h.x + h.w &&
+                    player.y + player.radius > h.y &&
+                    player.y - player.radius < h.y + h.h) {
+                    playerDeath();
+                }
+            });
+
+            // Nuclear bomb countdowns & massive explosions
+            nuclearBombs.forEach(bomb => {
+                if (!bomb.exploded) {
+                    const dist = Math.hypot(player.x - (bomb.x + bomb.w/2), player.y - (bomb.y + bomb.h/2));
+                    if (dist < player.radius + 14 && !bomb.triggered) {
+                        bomb.triggered = true;
+                        playSound('beep');
+                    }
+
+                    if (bomb.triggered) {
+                        bomb.timer -= dt;
+                        if (Math.random() < 0.35) playSound('beep');
+                        if (bomb.timer <= 0) {
+                            bomb.exploded = true;
+                            playSound('nuke_explosion');
+                            screenShakeTimer = 0.6;
+                            screenShakeIntensity = 12;
+
+                            const bCenterX = bomb.x + bomb.w / 2;
+                            const bCenterY = bomb.y + bomb.h / 2;
+
+                            // Create intense fiery explosion particle debris
+                            for (let i = 0; i < 75; i++) {
+                                const angle = Math.random() * Math.PI * 2;
+                                const speed = 2 + Math.random() * 12;
+                                fireParticles.push({
+                                    x: bCenterX,
+                                    y: bCenterY,
+                                    vx: Math.cos(angle) * speed,
+                                    vy: Math.sin(angle) * speed,
+                                    size: 6 + Math.random() * 10,
+                                    life: 1.0,
+                                    color: Math.random() > 0.4 ? '#ef4444' : (Math.random() > 0.5 ? '#f59e0b' : '#ffffff')
+                                });
+                            }
+
+                            // Destroy nearby platforms & check player blast radius
+                            platforms.forEach(plat => {
+                                const platCenterX = plat.x + plat.w / 2;
+                                const platCenterY = plat.y + plat.h / 2;
+                                const pDist = Math.hypot(bCenterX - platCenterX, bCenterY - platCenterY);
+                                if (pDist < 180) {
+                                    plat.destroyed = true;
+                                }
+                            });
+
+                            const playerBlastDist = Math.hypot(player.x - bCenterX, player.y - bCenterY);
+                            if (playerBlastDist < 200) {
+                                playerDeath();
+                            }
+                        }
+                    }
+                }
+            });
+
+            // Update fire particles
+            fireParticles.forEach(fp => {
+                fp.x += fp.vx;
+                fp.y += fp.vy;
+                fp.life -= dt * 1.5;
+            });
+            fireParticles = fireParticles.filter(fp => fp.life > 0);
+
+            coinsList.forEach(coin => {
+                if (!coin.collected) {
+                    const dist = Math.hypot(player.x - coin.x, player.y - coin.y);
+                    if (dist < player.radius + 12) {
+                        coin.collected = true;
+                        coins++;
+                        score += 100;
+                        playSound('coin');
+                        updateHUD();
+                    }
+                }
+            });
+
+            enemies.forEach(en => {
+                if (!en.alive) return;
+                en.x += en.vx;
+                if (en.x < en.minX || en.x > en.maxX) {
+                    en.vx *= -1;
+                }
+
+                const dx = player.x - (en.x + en.w/2);
+                const dy = player.y - (en.y + en.h/2);
+                const dist = Math.hypot(dx, dy);
+
+                if (dist < player.radius + en.w/2) {
+                    if (player.vy > 0 && player.y < en.y + 10) {
+                        en.alive = false;
+                        player.vy = -8.5;
+                        score += 300;
+                        playSound('stomp');
+                    } else {
+                        playerDeath();
+                    }
+                }
+            });
+
+            // Interactive Door Entry Check
+            if (!exitDoor.reached &&
+                player.x + player.radius > exitDoor.x &&
+                player.x - player.radius < exitDoor.x + exitDoor.w &&
+                player.y + player.radius >= exitDoor.y &&
+                player.y - player.radius <= exitDoor.y + exitDoor.h) {
+                
+                if (keys.upPressed) {
+                    exitDoor.reached = true;
+                    playSound('door');
+
+                    if (currentWorld < 7) {
+                        currentWorld++;
+                        setTimeout(() => loadWorld(currentWorld), 800);
+                    } else {
+                        gameState = 'WIN';
+                        overlayTitle.textContent = "VICTORY!";
+                        overlayDesc.textContent = `You conquered all 7 worlds! Final Score: ${score}`;
+                        actionBtn.textContent = "PLAY AGAIN";
+                        overlay.classList.remove('hidden');
+                    }
+                }
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            let cameraX = player.x - canvas.width / 3;
+            if (cameraX < 0) cameraX = 0;
+            if (cameraX > levelLength - canvas.width) cameraX = levelLength - canvas.width;
+
+            ctx.save();
+
+            // Apply screen shake offset if active
+            if (screenShakeTimer > 0) {
+                const shakeX = (Math.random() - 0.5) * screenShakeIntensity;
+                const shakeY = (Math.random() - 0.5) * screenShakeIntensity;
+                ctx.translate(shakeX, shakeY);
+            }
+
+            ctx.translate(-cameraX, 0);
+
+            let skyColors = ['#1e293b', '#311033', '#111827', '#064e3b', '#1e1b4b', '#450a0a', '#020617'];
+            ctx.fillStyle = skyColors[(currentWorld - 1) % skyColors.length];
+            ctx.fillRect(cameraX, 0, canvas.width, canvas.height);
+
+            platforms.forEach(plat => {
+                if (!plat.destroyed) {
+                    ctx.fillStyle = currentWorld === 6 ? '#7f1d1d' : (currentWorld === 2 ? '#334155' : '#047857');
+                    ctx.fillRect(plat.x, plat.y, plat.w, plat.h);
+                    ctx.fillStyle = currentWorld === 6 ? '#b91c1c' : (currentWorld === 2 ? '#475569' : '#10b981');
+                    ctx.fillRect(plat.x, plat.y, plat.w, 8);
+                }
+            });
+
+            hazards.forEach(h => {
+                ctx.fillStyle = '#ef4444';
+                for (let i = 0; i < h.w; i += 12) {
+                    ctx.beginPath();
+                    ctx.moveTo(h.x + i, h.y + h.h);
+                    ctx.lineTo(h.x + i + 6, h.y);
+                    ctx.lineTo(h.x + i + 12, h.y + h.h);
+                    ctx.fill();
+                }
+            });
+
+            coinsList.forEach(coin => {
+                if (!coin.collected) {
+                    ctx.fillStyle = '#fbbf24';
+                    ctx.beginPath();
+                    ctx.arc(coin.x, coin.y, 10, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#d97706';
+                    ctx.font = 'bold 12px monospace';
+                    ctx.fillText('$', coin.x - 4, coin.y + 4);
+                }
+            });
+
+            nuclearBombs.forEach(bomb => {
+                if (!bomb.exploded) {
+                    ctx.fillStyle = bomb.triggered ? (Math.floor(Date.now() / 150) % 2 === 0 ? '#ef4444' : '#f59e0b') : '#374151';
+                    ctx.fillRect(bomb.x, bomb.y, bomb.w, bomb.h);
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = 'bold 10px monospace';
+                    ctx.fillText('☢', bomb.x + 6, bomb.y + 18);
+
+                    if (bomb.triggered) {
+                        ctx.fillStyle = '#ef4444';
+                        ctx.font = 'bold 10px monospace';
+                        ctx.fillText(bomb.timer.toFixed(1) + 's', bomb.x - 6, bomb.y - 6);
+                    }
+                }
+            });
+
+            // Draw fiery explosion particles
+            fireParticles.forEach(fp => {
+                ctx.fillStyle = fp.color;
+                ctx.beginPath();
+                ctx.arc(fp.x, fp.y, fp.size * fp.life, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            enemies.forEach(en => {
+                if (!en.alive) return;
+                ctx.fillStyle = '#dc2626';
+                ctx.fillRect(en.x, en.y, en.w, en.h);
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(en.x + 6, en.y + 8, 6, 6);
+                ctx.fillRect(en.x + 20, en.y + 8, 6, 6);
+                ctx.fillStyle = '#000000';
+                ctx.fillRect(en.x + 8, en.y + 10, 2, 2);
+                ctx.fillRect(en.x + 22, en.y + 10, 2, 2);
+            });
+
+            // Draw Interactive Exit Door
+            ctx.fillStyle = '#78350f';
+            ctx.fillRect(exitDoor.x, exitDoor.y, exitDoor.w, exitDoor.h);
+            ctx.fillStyle = '#b45309';
+            ctx.fillRect(exitDoor.x + 4, exitDoor.y + 4, exitDoor.w - 8, exitDoor.h - 4);
+            ctx.fillStyle = '#fbbf24';
+            ctx.beginPath();
+            ctx.arc(exitDoor.x + 36, exitDoor.y + exitDoor.h / 2, 4, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 8px monospace';
+            ctx.fillText('DOOR (▲)', exitDoor.x - 12, exitDoor.y - 10);
+
+            // Draw Player or Death Particles with X X Eyes
+            if (player.isDead) {
+                player.particles.forEach(p => {
+                    ctx.fillStyle = p.color;
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+            } else {
+                ctx.save();
+                ctx.translate(player.x, player.y);
+                ctx.rotate(player.rotation);
+
+                ctx.fillStyle = '#3b82f6';
+                ctx.beginPath();
+                ctx.arc(0, 0, player.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#1d4ed8';
+                ctx.lineWidth = 3;
+                ctx.stroke();
+
+                ctx.rotate(-player.rotation);
+
+                if (player.isDead) {
+                    ctx.strokeStyle = '#000000';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(-8, -6); ctx.lineTo(-2, 0);
+                    ctx.moveTo(-2, -6); ctx.lineTo(-8, 0);
+                    ctx.moveTo(2, -6); ctx.lineTo(8, 0);
+                    ctx.moveTo(8, -6); ctx.lineTo(2, 0);
+                    ctx.stroke();
+                } else {
+                    ctx.fillStyle = '#ffffff';
+                    ctx.beginPath();
+                    ctx.arc(-6, -4, 4, 0, Math.PI * 2);
+                    ctx.arc(6, -4, 4, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#000000';
+                    ctx.beginPath();
+                    ctx.arc(-5, -4, 1.5, 0, Math.PI * 2);
+                    ctx.arc(7, -4, 1.5, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.arc(0, 2, 6, 0, Math.PI, false);
+                    ctx.stroke();
+                }
+
+                ctx.restore();
+            }
+
+            ctx.restore();
+        }
+
+        let lastTime = performance.now();
+        function gameLoop(now) {
+            let dt = (now - lastTime) / 1000;
+            if (dt > 0.1) dt = 0.1;
+            lastTime = now;
+
+            update(dt);
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>
